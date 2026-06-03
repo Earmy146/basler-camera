@@ -1,38 +1,26 @@
-## 5. Quy Trinh Chup
+## Quy trinh chay khong can ADB
 
-Neu may dang cam nhieu dien thoai/emulator, mo file `.env` roi dien serial ADB.
+Muc tieu cua che do MQTT la bo phu thuoc ADB/cap USB cho viec dong bo pattern.
+PC chay script capture va publish len HiveMQ. Dien thoai hien pattern va nhan
+lenh tu HiveMQ qua MQTT over WebSocket.
 
-Lay serial bang:
+Luon can phan biet 2 viec:
 
-```powershell
-adb devices -l
-```
+- Nap viewer len dien thoai: mo `viewer.html` bang browser, app, LAN server, hoac cach khac.
+- Dieu khien/dong bo pattern: MQTT qua HiveMQ.
 
-Vi du:
+Neu dung MQTT, `control_server.py` khong con dieu khien pattern nua. Neu van chay
+server tren PC thi no chi de browser tren dien thoai tai file `viewer.html`.
 
-```env
-DEFLECTO_ADB_SERIAL=R5CT1234567
-DEFLECTO_ADB_PORT=8000
-```
+## Chay MQTT voi browser hien tai
 
-Neu chi cam mot dien thoai thi co the de trong:
-
-```env
-DEFLECTO_ADB_SERIAL=
-```
-
-## Chay sync bang HiveMQ khi co nhieu dien thoai
-
-Cach nay dung HiveMQ de dong bo pattern, nen `capture_basler.py` khong can biet
-ADB serial cua tung dien thoai nua.
-
-1. Cai MQTT client cho Python:
+1. Cai thu vien MQTT cho Python:
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-2. Dien `.env`:
+2. Cau hinh `.env`:
 
 ```env
 DEFLECTO_CONTROL_MODE=mqtt
@@ -42,98 +30,38 @@ DEFLECTO_MQTT_PORT=8883
 DEFLECTO_MQTT_USERNAME=your_hivemq_username
 DEFLECTO_MQTT_PASSWORD=your_hivemq_password
 DEFLECTO_MQTT_SESSION=lab1
+DEFLECTO_PATTERN_T=40
 
-# Neu co 2 dien thoai va muon cho ca 2 da render moi cho chup:
-DEFLECTO_MQTT_EXPECTED_VIEWERS=2
+# Neu co nhieu dien thoai va muon cho du so viewer render moi chup:
+DEFLECTO_MQTT_EXPECTED_VIEWERS=0
 DEFLECTO_MQTT_ACK_TIMEOUT_SEC=2.0
 ```
 
-3. Mo viewer tren moi dien thoai voi cung `mqttSession`.
-
-### Cach dung dung voi MQTT thuan: deploy viewer len Vercel
-
-Khi sync bang MQTT, dien thoai khong can vao `http://<PC_LAN_IP>:8000`
-va khong can ADB reverse nua. PC chi can chay script capture de publish len
-HiveMQ; dien thoai mo `viewer.html` da deploy tren Vercel va subscribe lenh
-tu HiveMQ qua WebSocket.
-
-Tao file config cho viewer:
+3. Tao `deflecto-viewer-config.js` cho browser:
 
 ```powershell
 copy deflecto-viewer-config.example.js deflecto-viewer-config.js
 ```
 
-Sua `deflecto-viewer-config.js`:
+Trong browser, HiveMQ Cloud dung WebSocket TLS port `8884`, khac voi Python
+dung MQTT TLS port `8883`.
 
-```js
-window.DEFLECTO_VIEWER_CONFIG = {
-  control: "mqtt",
-  T: 40,
-  mqtt: {
-    host: "xxxxxxxx.s1.eu.hivemq.cloud",
-    wsPort: 8884,
-    path: "/mqtt",
-    scheme: "wss",
-    username: "viewer_username",
-    password: "viewer_password",
-    session: "lab1"
-  }
-};
-```
-
-Neu deploy Vercel bang GitHub/GitLab, file `deflecto-viewer-config.js` dang nam trong
-`.gitignore` nen se khong duoc commit. Co 2 cach:
-
-- Commit file config that voi MQTT user rieng, quyen han che theo topic.
-- Hoac bo config khoi Git va tiep tuc dung URL param khi test.
-
-Sau khi deploy len Vercel, dien thoai chi can mo:
-
-```text
-https://<ten-du-an>.vercel.app/viewer.html
-```
-
-hoac:
-
-```text
-https://<ten-du-an>.vercel.app/
-```
-
-`vercel.json` da rewrite `/` ve `/viewer.html`.
-
-Luu y: credential nam trong browser-side JavaScript thi khong phai bi mat.
-Nen tao MQTT user rieng cho viewer va gioi han quyen topic, vi du chi trong
-`deflectometry/lab1/#`.
-
-Neu chua muon tao file config, van co the truyen tham so bang URL nhu cu:
-
-Neu van chay `control_server.py` de serve file HTML qua LAN:
-
-```text
-http://<PC_LAN_IP>:8000/viewer.html?control=mqtt&mqttHost=xxxxxxxx.s1.eu.hivemq.cloud&mqttUsername=your_hivemq_username&mqttPassword=your_hivemq_password&mqttSession=lab1
-```
-
-Neu mo file HTML truc tiep tren dien thoai thi URL cung can cac tham so tren.
-Browser dung MQTT over WebSocket cua HiveMQ Cloud, port mac dinh la `8884`.
-Python capture dung MQTT TLS, port mac dinh la `8883`.
-
-4. Chay Basler capture:
-
-```powershell
-python capture_basler.py
-```
-
-Khi bam `SPACE`, Python publish pattern moi len topic
-`deflectometry/lab1/cmd`; tat ca viewer dang subscribe se doi pattern cung luc.
-Viewer se gui ACK ve `deflectometry/lab1/ack`.
-
-1. Chay server tren may tinh:
+4. Neu van dung browser va khong deploy/app, chay server tinh de phat file HTML:
 
 ```powershell
 python control_server.py --host 0.0.0.0 --port 8000
 ```
 
-2. Chay script chup tren may tinh:
+Mo tren dien thoai qua Wi-Fi cung mang LAN:
+
+```text
+http://<PC_LAN_IP>:8000/viewer.html
+```
+
+Buoc nay khong can ADB va khong can cap. Server nay chi de tai file HTML.
+Sau khi viewer da mo, viec doi pattern di qua HiveMQ.
+
+5. Chay capture tren PC:
 
 ```powershell
 python capture.py
@@ -145,14 +73,62 @@ hoac:
 python capture_basler.py
 ```
 
-3. Cam dien thoai bang USB.
+Khi bam `SPACE`, Python publish len topic:
 
-4. Mo tren dien thoai:
+```text
+deflectometry/lab1/cmd
+```
+
+Tat ca viewer dang subscribe cung session se doi pattern. Viewer gui ACK ve:
+
+```text
+deflectometry/lab1/ack
+```
+
+## Khi nao can app nho?
+
+Neu muon khong deploy, khong mo server PC de phat HTML, va khong cam cap, thi
+dung mot app nho la huong gon nhat. App do chi can bundle viewer HTML/JS ben
+trong WebView hoac viet native MQTT client, roi connect thang HiveMQ.
+
+Noi cach khac:
+
+- Browser + LAN server: khong can cap, nhung PC van phai phat file HTML.
+- Browser + deploy: khong can cap, khong can PC phat file HTML.
+- App nho: khong can cap, khong can deploy, khong can PC phat file HTML.
+- ADB reverse + `http://127.0.0.1:8000`: cach cu, can cap, khong can khi da dung MQTT.
+
+HTML hien tai van co the nhan va xu ly MQTT truc tiep. Khong bat buoc phai build
+app moi dieu khien duoc MQTT. App chi giai quyet bai toan dong goi viewer len
+dien thoai de khoi phu thuoc server/deploy.
+
+## Luu y bao mat
+
+Neu browser hoac app connect truc tiep HiveMQ thi credential nam phia client,
+khong nen xem la bi mat. Nen tao MQTT user rieng cho viewer va gioi han quyen
+topic, vi du `deflectometry/lab1/#`.
+
+## Che do cu qua ADB
+
+Chi dung phan nay neu muon quay lai dieu khien HTTP cu.
+
+1. Chay server tren may tinh:
+
+```powershell
+python control_server.py --host 0.0.0.0 --port 8000
+```
+
+2. Dat `.env`:
+
+```env
+DEFLECTO_CONTROL_MODE=http
+DEFLECTO_ADB_REVERSE=1
+```
+
+3. Cam dien thoai bang USB va mo:
 
 ```text
 http://127.0.0.1:8000/viewer.html
 ```
 
-5. Bam `START` tren dien thoai.
-
-Mo giao dien camera view, bam `SPACE` de chup, `R` de quay lai, `Q` de thoat chuong trinh.
+Che do nay moi can ADB reverse/cap USB.
