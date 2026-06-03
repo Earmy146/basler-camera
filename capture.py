@@ -28,7 +28,7 @@ PATTERN_NAMES = [f"V{i}" for i in range(4)] + [f"H{i}" for i in range(4)]
 SYNC_VIEWER = os.environ.get("DEFLECTO_SYNC_VIEWER", "1") != "0"
 CONTROL_SET_URL = os.environ.get("DEFLECTO_CONTROL_SET_URL", "http://127.0.0.1:8000/api/set")
 PATTERN_SETTLE_SEC = float(os.environ.get("DEFLECTO_SETTLE_SEC", "0.35"))
-CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.7"))
+CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.25"))
 ADB_REVERSE = os.environ.get("DEFLECTO_ADB_REVERSE", "1") != "0"
 ADB_PATH = os.environ.get("DEFLECTO_ADB_PATH", "adb")
 ADB_PORT = os.environ.get("DEFLECTO_ADB_PORT", "8000")
@@ -70,12 +70,11 @@ def sync_viewer(idx):
         with urllib.request.urlopen(url, timeout=2) as response:
             response.read()
         print(f"  [SYNC] viewer -> {name}")
-        time.sleep(PATTERN_SETTLE_SEC)
     except Exception as exc:
         print(f"  [WARN] Khong dong bo viewer {name}: {exc}")
 
 
-def wait_for_key_release(quiet_sec=0.18, timeout_sec=1.5):
+def wait_for_key_release(quiet_sec=0.08, timeout_sec=0.5):
     quiet_since = None
     deadline = time.monotonic() + timeout_sec
 
@@ -125,6 +124,7 @@ def main():
     print(f"Hiển thị pattern {PATTERN_NAMES[idx]} trên tablet → bấm SPACE")
     print("Phím: SPACE = chụp, R = chụp lại trước đó, Q = thoát\n")
     sync_viewer(idx)
+    pattern_ready_at = time.monotonic() + PATTERN_SETTLE_SEC
     last_capture_at = 0.0
 
     while True:
@@ -157,6 +157,8 @@ def main():
 
         if key == ord(' '):
             now = time.monotonic()
+            if now < pattern_ready_at:
+                continue
             if now - last_capture_at < CAPTURE_COOLDOWN_SEC:
                 wait_for_key_release(quiet_sec=0.08, timeout_sec=0.4)
                 continue
@@ -174,11 +176,13 @@ def main():
             else:
                 print(f"  -> Chuyen sang pattern {PATTERN_NAMES[idx]} tren tablet")
             sync_viewer(idx)
+            pattern_ready_at = time.monotonic() + PATTERN_SETTLE_SEC
             wait_for_key_release()
         elif key == ord('r') and idx > 0:
             idx -= 1
             print(f"  Chup lai {PATTERN_NAMES[idx]}")
             sync_viewer(idx)
+            pattern_ready_at = time.monotonic() + PATTERN_SETTLE_SEC
         elif key == ord('q'):
             print("Da thoat som.")
             break
