@@ -167,7 +167,7 @@ def main():
     print("Phím: SPACE = chụp, R = chụp lại trước đó, Q = thoát\n")
     sync_viewer(idx)
 
-    while idx < len(PATTERN_NAMES):
+    while True:
         frame = grab_bgr(camera, converter)
         if frame is None:
             continue
@@ -209,9 +209,13 @@ def main():
             cv2.imwrite(str(path), gray)
             print(f"  [OK] {path}  (mean={mean_val:.1f}, sat={sat_pct:.1f}%)")
             idx += 1
-            if idx < len(PATTERN_NAMES):
+            if idx == len(PATTERN_NAMES):
+                idx = 0
+                print("  -> Hoan tat 8 captures. Quay lai pattern V0")
+                print("  -> Co the chup vong moi hoac bam Q de thoat, sau do chay: python process.py")
+            else:
                 print(f"  -> Chuyen sang pattern {PATTERN_NAMES[idx]} tren man hinh")
-                sync_viewer(idx)
+            sync_viewer(idx)
         elif key == ord('r') and idx > 0:
             idx -= 1
             print(f"  Chup lai {PATTERN_NAMES[idx]}")
@@ -223,8 +227,6 @@ def main():
     camera.StopGrabbing()
     camera.Close()
     cv2.destroyAllWindows()
-    if idx == len(PATTERN_NAMES):
-        print("\nHoan tat 8 captures. Chay: python process.py")
 
 
 if __name__ == "__main__":
