@@ -28,7 +28,7 @@ PATTERN_NAMES = [f"V{i}" for i in range(4)] + [f"H{i}" for i in range(4)]
 SYNC_VIEWER = os.environ.get("DEFLECTO_SYNC_VIEWER", "1") != "0"
 CONTROL_SET_URL = os.environ.get("DEFLECTO_CONTROL_SET_URL", "http://127.0.0.1:8000/api/set")
 PATTERN_SETTLE_SEC = float(os.environ.get("DEFLECTO_SETTLE_SEC", "0.35"))
-CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.8"))
+CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.7"))
 ADB_REVERSE = os.environ.get("DEFLECTO_ADB_REVERSE", "1") != "0"
 ADB_PATH = os.environ.get("DEFLECTO_ADB_PATH", "adb")
 ADB_PORT = os.environ.get("DEFLECTO_ADB_PORT", "8000")
