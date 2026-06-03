@@ -50,6 +50,63 @@ DEFLECTO_MQTT_ACK_TIMEOUT_SEC=2.0
 
 3. Mo viewer tren moi dien thoai voi cung `mqttSession`.
 
+### Cach dung dung voi MQTT thuan: deploy viewer len Vercel
+
+Khi sync bang MQTT, dien thoai khong can vao `http://<PC_LAN_IP>:8000`
+va khong can ADB reverse nua. PC chi can chay script capture de publish len
+HiveMQ; dien thoai mo `viewer.html` da deploy tren Vercel va subscribe lenh
+tu HiveMQ qua WebSocket.
+
+Tao file config cho viewer:
+
+```powershell
+copy deflecto-viewer-config.example.js deflecto-viewer-config.js
+```
+
+Sua `deflecto-viewer-config.js`:
+
+```js
+window.DEFLECTO_VIEWER_CONFIG = {
+  control: "mqtt",
+  T: 40,
+  mqtt: {
+    host: "xxxxxxxx.s1.eu.hivemq.cloud",
+    wsPort: 8884,
+    path: "/mqtt",
+    scheme: "wss",
+    username: "viewer_username",
+    password: "viewer_password",
+    session: "lab1"
+  }
+};
+```
+
+Neu deploy Vercel bang GitHub/GitLab, file `deflecto-viewer-config.js` dang nam trong
+`.gitignore` nen se khong duoc commit. Co 2 cach:
+
+- Commit file config that voi MQTT user rieng, quyen han che theo topic.
+- Hoac bo config khoi Git va tiep tuc dung URL param khi test.
+
+Sau khi deploy len Vercel, dien thoai chi can mo:
+
+```text
+https://<ten-du-an>.vercel.app/viewer.html
+```
+
+hoac:
+
+```text
+https://<ten-du-an>.vercel.app/
+```
+
+`vercel.json` da rewrite `/` ve `/viewer.html`.
+
+Luu y: credential nam trong browser-side JavaScript thi khong phai bi mat.
+Nen tao MQTT user rieng cho viewer va gioi han quyen topic, vi du chi trong
+`deflectometry/lab1/#`.
+
+Neu chua muon tao file config, van co the truyen tham so bang URL nhu cu:
+
 Neu van chay `control_server.py` de serve file HTML qua LAN:
 
 ```text

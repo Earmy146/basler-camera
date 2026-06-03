@@ -72,15 +72,47 @@
   <button id="start-btn">START</button>
 </div>
 
+<script src="./deflecto-viewer-config.js"></script>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
 const urlParams = new URLSearchParams(window.location.search);
-let T = parseInt(urlParams.get('T')) || 40;
+const viewerConfig = window.DEFLECTO_VIEWER_CONFIG || {};
+
+function getConfigValue(name) {
+  if (!viewerConfig || typeof viewerConfig !== 'object') return '';
+  if (viewerConfig[name] !== undefined && viewerConfig[name] !== null) return viewerConfig[name];
+  if (viewerConfig.mqtt && typeof viewerConfig.mqtt === 'object' && name.startsWith('mqtt')) {
+    const mqttKey = name.slice(4);
+    const nestedKey = mqttKey.charAt(0).toLowerCase() + mqttKey.slice(1);
+    if (viewerConfig.mqtt[nestedKey] !== undefined && viewerConfig.mqtt[nestedKey] !== null) {
+      return viewerConfig.mqtt[nestedKey];
+    }
+  }
+  return '';
+}
+
+function getParamAny(names, fallback = '') {
+  for (const name of names) {
+    const value = urlParams.get(name);
+    if (value !== null && value !== '') return value;
+  }
+  for (const name of names) {
+    const value = getConfigValue(name);
+    if (value !== '') return String(value);
+  }
+  return fallback;
+}
+
+function hasParamAny(names) {
+  return getParamAny(names, '') !== '';
+}
+
+let T = parseInt(getParamAny(['T', 'patternT', 'pattern_t'], '40')) || 40;
 
 const N_PHASES = 4;
 const N_TOTAL = 8;
-const requestedControl = (urlParams.get('control') || urlParams.get('mode') || '').toLowerCase();
-const hasMqttParams = urlParams.has('mqttHost') || urlParams.has('mqtt_host');
+const requestedControl = getParamAny(['control', 'mode'], '').toLowerCase();
+const hasMqttParams = hasParamAny(['mqttHost', 'mqtt_host']);
 const controlMode = requestedControl || (hasMqttParams ? 'mqtt' : (window.location.protocol !== 'file:' ? 'http' : 'tap'));
 const isMqttControlled = controlMode === 'mqtt';
 const isHttpControlled = controlMode === 'http' && window.location.protocol !== 'file:';
@@ -109,14 +141,6 @@ let lastVersion = -1;
 let pollTimer = null;
 let mqttClient = null;
 let mqttConnected = false;
-
-function getParamAny(names, fallback = '') {
-  for (const name of names) {
-    const value = urlParams.get(name);
-    if (value !== null && value !== '') return value;
-  }
-  return fallback;
-}
 
 function getViewerId() {
   const key = 'deflectoViewerId';
