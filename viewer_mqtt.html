@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, maximum-scale=1">
+<title>Deflectometry MQTT Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: Arial, sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #label {
+    position: fixed; top: 8px; left: 8px; z-index: 5;
+    color: #ff00ff; font-family: Consolas, monospace; font-size: 13px;
+    background: rgba(0,0,0,0.72); padding: 5px 8px; border-radius: 4px;
+    pointer-events: none;
+  }
+  #panel {
+    position: fixed; inset: 0; z-index: 10; overflow-y: auto;
+    background: #111; color: #fff; padding: 18px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #form {
+    width: min(520px, 100%);
+    display: grid; gap: 10px;
+  }
+  h1 { font-size: 21px; margin-bottom: 4px; }
+  .row { display: grid; gap: 5px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  label { font-size: 12px; color: #bbb; }
+  input {
+    width: 100%; padding: 10px; background: #222; color: #fff;
+    border: 1px solid #444; border-radius: 4px; font-size: 15px;
+  }
+  button {
+    min-height: 46px; padding: 0 16px; border: 0; border-radius: 6px;
+    background: #ffcc00; color: #111; font-weight: 700; font-size: 15px;
+  }
+  #status { min-height: 18px; color: #bbb; font-size: 12px; font-family: Consolas, monospace; }
+  @media (max-width: 520px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="label">MQTT idle</div>
+<div id="panel">
+  <div id="form">
+    <h1>MQTT Viewer</h1>
+    <div class="row">
+      <label for="host">HiveMQ host</label>
+      <input id="host" autocomplete="off" value="09403771044540c8bc18d960af026317.s1.eu.hivemq.cloud">
+    </div>
+    <div class="grid">
+      <div class="row">
+        <label for="username">Username</label>
+        <input id="username" autocomplete="username" value="deflecto">
+      </div>
+      <div class="row">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password">
+      </div>
+    </div>
+    <div class="grid">
+      <div class="row">
+        <label for="session">Session</label>
+        <input id="session" value="lab1">
+      </div>
+      <div class="row">
+        <label for="period">Pattern period T</label>
+        <input id="period" type="number" min="1" step="1" value="40">
+      </div>
+    </div>
+    <button id="start">START</button>
+    <div id="status"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+const N_PHASES = 4;
+const N_TOTAL = 8;
+const STORE_KEY = 'deflectoMqttViewerConfig';
+const VIEWER_KEY = 'deflectoMqttViewerId';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const label = document.getElementById('label');
+const panel = document.getElementById('panel');
+const statusEl = document.getElementById('status');
+const startBtn = document.getElementById('start');
+const hostInput = document.getElementById('host');
+const usernameInput = document.getElementById('username');
+const passwordInput = document.getElementById('password');
+const sessionInput = document.getElementById('session');
+const periodInput = document.getElementById('period');
+
+let mqttClient = null;
+let mqttConnected = false;
+let idx = 0;
+let T = 40;
+let lastVersion = -1;
+let started = false;
+let cmdTopic = '';
+let ackTopic = '';
+
+function loadSavedConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+    if (saved.host) hostInput.value = saved.host;
+    if (saved.username) usernameInput.value = saved.username;
+    if (saved.password) passwordInput.value = saved.password;
+    if (saved.session) sessionInput.value = saved.session;
+    if (saved.period) periodInput.value = saved.period;
+  } catch (e) {}
+}
+
+function saveConfig(config) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(config));
+  } catch (e) {}
+}
+
+function viewerId() {
+  try {
+    let value = localStorage.getItem(VIEWER_KEY);
+    if (!value) {
+      value = `viewer-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`;
+      localStorage.setItem(VIEWER_KEY, value);
+    }
+    return value;
+  } catch (e) {
+    return `viewer-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`;
+  }
+}
+
+const myViewerId = viewerId();
+
+function resize() {
+  const d = window.devicePixelRatio || 1;
+  canvas.width = Math.round(window.innerWidth * d);
+  canvas.height = Math.round(window.innerHeight * d);
+}
+
+window.addEventListener('resize', () => {
+  resize();
+  if (started) drawPattern(idx);
+});
+
+function drawPattern(i) {
+  const W = canvas.width;
+  const H = canvas.height;
+  const d = window.devicePixelRatio || 1;
+  const periodPx = Math.max(1, T * d);
+  const isVertical = i < N_PHASES;
+  const phaseIdx = i % N_PHASES;
+  const phi = 2 * Math.PI * phaseIdx / N_PHASES;
+  const img = ctx.createImageData(W, H);
+  const data = img.data;
+
+  if (isVertical) {
+    const row = new Uint8Array(W);
+    for (let x = 0; x < W; x++) {
+      row[x] = Math.round(127.5 + 127.5 * Math.cos(2 * Math.PI * x / periodPx + phi));
+    }
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const v = row[x];
+        const k = (y * W + x) * 4;
+        data[k] = v;
+        data[k + 1] = v;
+        data[k + 2] = v;
+        data[k + 3] = 255;
+      }
+    }
+  } else {
+    const col = new Uint8Array(H);
+    for (let y = 0; y < H; y++) {
+      col[y] = Math.round(127.5 + 127.5 * Math.cos(2 * Math.PI * y / periodPx + phi));
+    }
+    for (let y = 0; y < H; y++) {
+      const v = col[y];
+      for (let x = 0; x < W; x++) {
+        const k = (y * W + x) * 4;
+        data[k] = v;
+        data[k + 1] = v;
+        data[k + 2] = v;
+        data[k + 3] = 255;
+      }
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  const name = (isVertical ? 'V' : 'H') + phaseIdx;
+  label.textContent = `${i + 1}/${N_TOTAL} ${name} T=${T} ${mqttConnected ? 'MQTT' : 'offline'}`;
+}
+
+function applyCommand(payload) {
+  const nextIdx = Number.parseInt(payload.idx, 10);
+  if (Number.isNaN(nextIdx)) return;
+  const nextT = payload.T === undefined ? T : Number.parseInt(payload.T, 10);
+  const version = payload.version === undefined ? lastVersion + 1 : Number(payload.version);
+
+  idx = Math.max(0, Math.min(N_TOTAL - 1, nextIdx));
+  if (!Number.isNaN(nextT) && nextT > 0) T = nextT;
+  lastVersion = version;
+  periodInput.value = T;
+
+  if (started) {
+    drawPattern(idx);
+    requestAnimationFrame(() => publishAck(version));
+  }
+}
+
+function publishAck(version) {
+  if (!mqttClient || !mqttConnected) return;
+  const phaseIdx = idx % N_PHASES;
+  mqttClient.publish(ackTopic, JSON.stringify({
+    viewerId: myViewerId,
+    idx,
+    name: (idx < N_PHASES ? 'V' : 'H') + phaseIdx,
+    T,
+    version,
+    ready: true,
+    ts: Date.now(),
+  }), { qos: 1, retain: false });
+}
+
+async function enterFullscreen() {
+  try {
+    if (document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch (e) {}
+  try {
+    if (screen.orientation && screen.orientation.lock) {
+      await screen.orientation.lock('landscape');
+    }
+  } catch (e) {}
+}
+
+function connectMqtt(config) {
+  if (!window.mqtt) {
+    statusEl.textContent = 'MQTT.js failed to load';
+    return;
+  }
+  const prefix = `deflectometry/${config.session}`.replace(/^\/+|\/+$/g, '');
+  cmdTopic = `${prefix}/cmd`;
+  ackTopic = `${prefix}/ack`;
+  const url = `wss://${config.host}:8884/mqtt`;
+
+  mqttClient = mqtt.connect(url, {
+    clientId: myViewerId,
+    username: config.username,
+    password: config.password,
+    clean: true,
+    connectTimeout: 8000,
+    reconnectPeriod: 1000,
+  });
+
+  mqttClient.on('connect', () => {
+    mqttConnected = true;
+    mqttClient.subscribe(cmdTopic, { qos: 1 });
+    statusEl.textContent = `connected ${cmdTopic}`;
+    label.textContent = `MQTT connected ${cmdTopic}`;
+  });
+
+  mqttClient.on('message', (topic, payload) => {
+    if (topic !== cmdTopic) return;
+    try {
+      applyCommand(JSON.parse(payload.toString()));
+    } catch (e) {}
+  });
+
+  mqttClient.on('reconnect', () => {
+    statusEl.textContent = 'reconnecting';
+  });
+
+  mqttClient.on('close', () => {
+    mqttConnected = false;
+  });
+
+  mqttClient.on('error', (err) => {
+    statusEl.textContent = `error: ${err.message || err}`;
+  });
+}
+
+startBtn.addEventListener('click', async () => {
+  const config = {
+    host: hostInput.value.trim(),
+    username: usernameInput.value.trim(),
+    password: passwordInput.value,
+    session: sessionInput.value.trim() || 'lab1',
+    period: Math.max(1, Number.parseInt(periodInput.value, 10) || 40),
+  };
+  if (!config.host || !config.username || !config.password) {
+    statusEl.textContent = 'host, username and password are required';
+    return;
+  }
+  saveConfig(config);
+  T = config.period;
+  started = true;
+  panel.style.display = 'none';
+  await enterFullscreen();
+  resize();
+  drawPattern(idx);
+  connectMqtt(config);
+});
+
+canvas.addEventListener('click', () => {
+  idx = (idx + 1) % N_TOTAL;
+  drawPattern(idx);
+});
+
+loadSavedConfig();
+resize();
+drawPattern(idx);
+</script>
+</body>
+</html>

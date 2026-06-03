@@ -1,5 +1,71 @@
 ## 5. Quy Trinh Chup
 
+## Cach khuyen dung: HiveMQ thuan, khong can ADB reverse/IP PC
+
+Luồng này đúng với mục tiêu: máy tính chỉ publish lệnh lên HiveMQ, điện thoại chỉ mở
+HTML và subscribe từ HiveMQ. Không cần `control_server.py`, không cần
+`adb reverse`, không cần lấy IPv4 bằng `ipconfig`.
+
+1. Tren HiveMQ Cloud, tao credential:
+
+```text
+Username: deflecto
+Password: <mat_khau_hivemq_cua_ban>
+Permission: Publish and Subscribe
+Topic Filter: deflectometry/#
+```
+
+2. Trong `.env`, giu cac gia tri:
+
+```env
+DEFLECTO_CONTROL_MODE=mqtt
+DEFLECTO_ADB_REVERSE=0
+DEFLECTO_MQTT_HOST=09403771044540c8bc18d960af026317.s1.eu.hivemq.cloud
+DEFLECTO_MQTT_PORT=8883
+DEFLECTO_MQTT_USERNAME=deflecto
+DEFLECTO_MQTT_PASSWORD=<mat_khau_hivemq_cua_ban>
+DEFLECTO_MQTT_SESSION=lab1
+DEFLECTO_PATTERN_T=40
+```
+
+3. Dua file `viewer_mqtt.html` len dien thoai va mo file do.
+
+Co the copy file qua USB, Zalo/Telegram, email, Google Drive, hoac host len mot
+static site. Sau khi file da mo duoc tren dien thoai thi viec dong bo pattern se
+di qua HiveMQ, khong di qua PC.
+
+4. Tren dien thoai, trong form MQTT Viewer:
+
+```text
+HiveMQ host: 09403771044540c8bc18d960af026317.s1.eu.hivemq.cloud
+Username: deflecto
+Password: <mat_khau_hivemq_cua_ban>
+Session: lab1
+Pattern period T: 40
+```
+
+Bam `START`. Cac gia tri se duoc luu tren trinh duyet, lan sau khong can nhap
+lai neu van dung dien thoai/trinh duyet do.
+
+5. Tren may tinh, chi can chay capture:
+
+```powershell
+python capture_basler.py
+```
+
+hoac:
+
+```powershell
+python capture.py
+```
+
+Khi script chuyen pattern, no publish len `deflectometry/lab1/cmd`.
+Moi dien thoai dang mo `viewer_mqtt.html` cung session `lab1` se doi pattern.
+
+## Cach cu: serve viewer qua PC/USB reverse
+
+Phan ben duoi la luong cu neu van muon serve `viewer.html` tu may tinh.
+
 Neu may dang cam nhieu dien thoai/emulator, mo file `.env` roi dien serial ADB.
 
 Lay serial bang:
