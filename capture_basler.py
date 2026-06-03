@@ -26,8 +26,10 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from deflecto_env import load_dotenv
 from pypylon import pylon
 
+load_dotenv()
 CAPTURE_DIR = Path("captures")
 CAPTURE_DIR.mkdir(exist_ok=True)
 
@@ -39,6 +41,7 @@ CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.
 ADB_REVERSE = os.environ.get("DEFLECTO_ADB_REVERSE", "1") != "0"
 ADB_PATH = os.environ.get("DEFLECTO_ADB_PATH", "adb")
 ADB_PORT = os.environ.get("DEFLECTO_ADB_PORT", "8000")
+ADB_SERIAL = os.environ.get("DEFLECTO_ADB_SERIAL", "").strip()
 
 # Khóa exposure/gain để 8 ảnh có cường độ nhất quán (BẮT BUỘC cho phase shifting).
 # Exposure theo micro-giây. Tăng/giảm để tránh saturated (xem overlay khi chạy).
@@ -150,9 +153,14 @@ def setup_adb_reverse():
     if not ADB_REVERSE:
         return
 
+    adb_cmd = [ADB_PATH]
+    if ADB_SERIAL:
+        adb_cmd += ["-s", ADB_SERIAL]
+    adb_cmd += ["reverse", f"tcp:{ADB_PORT}", f"tcp:{ADB_PORT}"]
+
     try:
         result = subprocess.run(
-            [ADB_PATH, "reverse", f"tcp:{ADB_PORT}", f"tcp:{ADB_PORT}"],
+            adb_cmd,
             capture_output=True,
             text=True,
             timeout=8,
@@ -165,7 +173,8 @@ def setup_adb_reverse():
         return
 
     if result.returncode == 0:
-        print(f"  [ADB] reverse tcp:{ADB_PORT} -> tcp:{ADB_PORT} OK")
+        target = f" ({ADB_SERIAL})" if ADB_SERIAL else ""
+        print(f"  [ADB] reverse tcp:{ADB_PORT} -> tcp:{ADB_PORT} OK{target}")
     else:
         msg = (result.stderr or result.stdout or "").strip()
         print(f"  [WARN] adb reverse that bai: {msg}")
