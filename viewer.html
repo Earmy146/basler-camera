@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, maximum-scale=1">
+<title>Deflectometry Pattern Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #label {
+    position: fixed; top: 8px; left: 8px;
+    color: #ff00ff; font-family: monospace; font-size: 14px;
+    background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 4px;
+    pointer-events: none; z-index: 10;
+  }
+  #start-overlay {
+    position: fixed; inset: 0; background: #111;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; font-family: sans-serif; padding: 16px; text-align: left; z-index: 20;
+    overflow-y: auto;
+  }
+  #start-overlay h1 { font-size: 22px; margin-bottom: 12px; text-align: center; }
+  #start-overlay h2 { font-size: 15px; margin: 12px 0 4px; color: #ff00ff; }
+  #start-overlay p, #start-overlay li { font-size: 13px; line-height: 1.45; }
+  #start-overlay ul { padding-left: 18px; margin-bottom: 8px; }
+  .info { font-family: monospace; font-size: 11px; color: #888; margin: 6px 0; }
+  #controls { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+  #controls label { font-size: 13px; }
+  #controls input {
+    width: 60px; padding: 6px; background: #222; color: #fff;
+    border: 1px solid #444; border-radius: 4px; font-size: 14px;
+  }
+  #start-btn {
+    padding: 14px 28px; font-size: 16px; border: none; border-radius: 8px;
+    background: #ff00ff; color: #fff; cursor: pointer; margin-top: 8px;
+    align-self: center;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="label"></div>
+<div id="start-overlay">
+  <h1>Deflectometry Pattern Viewer</h1>
+
+  <h2>BẮT BUỘC trước khi chạy (Galaxy S23):</h2>
+  <ul>
+    <li><b>Brightness MAX</b> kéo cao nhất, TẮT Adaptive brightness</li>
+    <li>TẮT <b>Eye comfort shield</b> (Settings → Display)</li>
+    <li>TẮT <b>Dark mode</b>, TẮT <b>Always-On Display</b></li>
+    <li>TẮT <b>Auto-rotate</b> sau khi xoay landscape</li>
+    <li><b>Screen timeout</b> ≥ 10 phút, bật <b>Do not disturb</b></li>
+  </ul>
+
+  <h2>Vì sao quan trọng:</h2>
+  <p>AMOLED dùng PWM dimming ở brightness thấp → cường độ flicker, phá phase shifting. Brightness MAX thì PWM tắt hoặc lên tần số rất cao. Eye Comfort Shield + Dark mode đổi gamma → mỗi ảnh có cường độ khác nhau.</p>
+
+  <h2>Điều khiển:</h2>
+  <ul>
+    <li>Tap màn hình → pattern tiếp theo (8 patterns: V0–V3, H0–H3)</li>
+    <li>Chỉnh chu kỳ sọc bên dưới rồi START</li>
+  </ul>
+
+  <div id="controls">
+    <label for="T-input">Chu kỳ sọc T (CSS px):</label>
+    <input type="number" id="T-input" min="10" max="200" step="5">
+  </div>
+
+  <div class="info" id="display-info"></div>
+
+  <button id="start-btn">START</button>
+</div>
+
+<script>
+const urlParams = new URLSearchParams(window.location.search);
+let T = parseInt(urlParams.get('T')) || 40;
+
+const N_PHASES = 4;
+const N_TOTAL = 8;
+const isControlled = window.location.protocol !== 'file:';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const label = document.getElementById('label');
+const overlay = document.getElementById('start-overlay');
+const startBtn = document.getElementById('start-btn');
+const tInput = document.getElementById('T-input');
+const displayInfo = document.getElementById('display-info');
+
+tInput.value = T;
+
+const dpr = window.devicePixelRatio || 1;
+displayInfo.textContent =
+  `Display: ${window.innerWidth}×${window.innerHeight} CSS px, ` +
+  `DPR=${dpr.toFixed(2)}, ` +
+  `physical=${Math.round(window.innerWidth * dpr)}×${Math.round(window.innerHeight * dpr)} px`;
+
+let idx = 0;
+let started = false;
+let lastVersion = -1;
+let pollTimer = null;
+
+function resize() {
+  const d = window.devicePixelRatio || 1;
+  canvas.width = Math.round(window.innerWidth * d);
+  canvas.height = Math.round(window.innerHeight * d);
+}
+resize();
+window.addEventListener('resize', () => {
+  resize();
+  if (started) drawPattern(idx);
+});
+
+async function apiGet(path) {
+  if (!isControlled) return null;
+  try {
+    const res = await fetch(path, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function applyState(state) {
+  if (!state) return false;
+  const nextIdx = Math.max(0, Math.min(N_TOTAL - 1, parseInt(state.idx)));
+  const nextT = Math.max(1, parseInt(state.T) || T);
+  const changed = nextIdx !== idx || nextT !== T || state.version !== lastVersion;
+
+  idx = nextIdx;
+  T = nextT;
+  tInput.value = T;
+  lastVersion = state.version;
+
+  if (started && changed) {
+    drawPattern(idx);
+  }
+  return true;
+}
+
+async function syncFromServer(forceDraw = false) {
+  const state = await apiGet(`/api/state?_=${Date.now()}`);
+  const ok = applyState(state);
+  if (started && (!ok || forceDraw)) drawPattern(idx);
+}
+
+async function setRemote(params) {
+  const qs = new URLSearchParams(params);
+  const state = await apiGet(`/api/set?${qs.toString()}&_=${Date.now()}`);
+  applyState(state);
+}
+
+function startPolling() {
+  if (!isControlled || pollTimer) return;
+  pollTimer = setInterval(() => syncFromServer(false), 100);
+}
+
+function drawPattern(i) {
+  const W = canvas.width, H = canvas.height;
+  const d = window.devicePixelRatio || 1;
+  const period_px = T * d;
+  const isVertical = i < N_PHASES;
+  const phaseIdx = i % N_PHASES;
+  const phi = 2 * Math.PI * phaseIdx / N_PHASES;
+
+  const img = ctx.createImageData(W, H);
+  const data = img.data;
+
+  if (isVertical) {
+    const row = new Uint8Array(W);
+    for (let x = 0; x < W; x++) {
+      row[x] = Math.round(127.5 + 127.5 * Math.cos(2 * Math.PI * x / period_px + phi));
+    }
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const v = row[x];
+        const k = (y * W + x) * 4;
+        data[k] = v; data[k+1] = v; data[k+2] = v; data[k+3] = 255;
+      }
+    }
+  } else {
+    const col = new Uint8Array(H);
+    for (let y = 0; y < H; y++) {
+      col[y] = Math.round(127.5 + 127.5 * Math.cos(2 * Math.PI * y / period_px + phi));
+    }
+    for (let y = 0; y < H; y++) {
+      const v = col[y];
+      for (let x = 0; x < W; x++) {
+        const k = (y * W + x) * 4;
+        data[k] = v; data[k+1] = v; data[k+2] = v; data[k+3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const name = (isVertical ? 'V' : 'H') + phaseIdx;
+  label.textContent = `${i + 1}/${N_TOTAL}  ${name}  T=${T}  ${isControlled ? '(PC sync)' : '(tap)'}`;
+}
+
+async function next() {
+  const nextIdx = (idx + 1) % N_TOTAL;
+  if (isControlled) {
+    await setRemote({ idx: nextIdx, T });
+  } else {
+    idx = nextIdx;
+    drawPattern(idx);
+  }
+}
+
+startBtn.addEventListener('click', async () => {
+  T = parseInt(tInput.value) || T;
+  try {
+    if (document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch (e) {}
+  try {
+    if (screen.orientation && screen.orientation.lock) {
+      await screen.orientation.lock('landscape');
+    }
+  } catch (e) {}
+  overlay.style.display = 'none';
+  started = true;
+
+  setTimeout(async () => {
+    resize();
+    if (isControlled) {
+      await setRemote({ T });
+      await syncFromServer(true);
+      startPolling();
+    } else {
+      drawPattern(idx);
+    }
+  }, 250);
+});
+
+canvas.addEventListener('click', next);
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'ArrowRight') next();
+});
+</script>
+</body>
+</html>
