@@ -21,6 +21,7 @@ Phím:
 """
 import cv2
 import os
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -34,6 +35,9 @@ PATTERN_NAMES = [f"V{i}" for i in range(4)] + [f"H{i}" for i in range(4)]
 SYNC_VIEWER = os.environ.get("DEFLECTO_SYNC_VIEWER", "1") != "0"
 CONTROL_SET_URL = os.environ.get("DEFLECTO_CONTROL_SET_URL", "http://127.0.0.1:8000/api/set")
 PATTERN_SETTLE_SEC = float(os.environ.get("DEFLECTO_SETTLE_SEC", "0.35"))
+ADB_REVERSE = os.environ.get("DEFLECTO_ADB_REVERSE", "1") != "0"
+ADB_PATH = os.environ.get("DEFLECTO_ADB_PATH", "adb")
+ADB_PORT = os.environ.get("DEFLECTO_ADB_PORT", "8000")
 
 # Khóa exposure/gain để 8 ảnh có cường độ nhất quán (BẮT BUỘC cho phase shifting).
 # Exposure theo micro-giây. Tăng/giảm để tránh saturated (xem overlay khi chạy).
@@ -127,7 +131,33 @@ def sync_viewer(idx):
         print(f"  [WARN] Khong dong bo viewer {name}: {exc}")
 
 
+def setup_adb_reverse():
+    if not ADB_REVERSE:
+        return
+
+    try:
+        result = subprocess.run(
+            [ADB_PATH, "reverse", f"tcp:{ADB_PORT}", f"tcp:{ADB_PORT}"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except FileNotFoundError:
+        print("  [WARN] Khong tim thay adb. Bo qua USB reverse, co the dung Wi-Fi URL.")
+        return
+    except subprocess.TimeoutExpired:
+        print("  [WARN] adb reverse qua lau. Kiem tra USB debugging tren dien thoai.")
+        return
+
+    if result.returncode == 0:
+        print(f"  [ADB] reverse tcp:{ADB_PORT} -> tcp:{ADB_PORT} OK")
+    else:
+        msg = (result.stderr or result.stdout or "").strip()
+        print(f"  [WARN] adb reverse that bai: {msg}")
+
+
 def main():
+    setup_adb_reverse()
     camera, converter = open_camera()
     idx = 0
     print("=" * 60)
