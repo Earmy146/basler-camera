@@ -28,6 +28,7 @@ PATTERN_NAMES = [f"V{i}" for i in range(4)] + [f"H{i}" for i in range(4)]
 SYNC_VIEWER = os.environ.get("DEFLECTO_SYNC_VIEWER", "1") != "0"
 CONTROL_SET_URL = os.environ.get("DEFLECTO_CONTROL_SET_URL", "http://127.0.0.1:8000/api/set")
 PATTERN_SETTLE_SEC = float(os.environ.get("DEFLECTO_SETTLE_SEC", "0.35"))
+CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.8"))
 ADB_REVERSE = os.environ.get("DEFLECTO_ADB_REVERSE", "1") != "0"
 ADB_PATH = os.environ.get("DEFLECTO_ADB_PATH", "adb")
 ADB_PORT = os.environ.get("DEFLECTO_ADB_PORT", "8000")
@@ -74,6 +75,21 @@ def sync_viewer(idx):
         print(f"  [WARN] Khong dong bo viewer {name}: {exc}")
 
 
+def wait_for_key_release(quiet_sec=0.18, timeout_sec=1.5):
+    quiet_since = None
+    deadline = time.monotonic() + timeout_sec
+
+    while time.monotonic() < deadline:
+        raw = cv2.waitKey(20)
+        if raw == -1:
+            if quiet_since is None:
+                quiet_since = time.monotonic()
+            elif time.monotonic() - quiet_since >= quiet_sec:
+                return
+        else:
+            quiet_since = None
+
+
 def setup_adb_reverse():
     if not ADB_REVERSE:
         return
@@ -109,6 +125,7 @@ def main():
     print(f"Hiển thị pattern {PATTERN_NAMES[idx]} trên tablet → bấm SPACE")
     print("Phím: SPACE = chụp, R = chụp lại trước đó, Q = thoát\n")
     sync_viewer(idx)
+    last_capture_at = 0.0
 
     while True:
         ret, frame = cap.read()
@@ -139,6 +156,12 @@ def main():
         key = cv2.waitKey(1) & 0xFF
 
         if key == ord(' '):
+            now = time.monotonic()
+            if now - last_capture_at < CAPTURE_COOLDOWN_SEC:
+                wait_for_key_release(quiet_sec=0.08, timeout_sec=0.4)
+                continue
+            last_capture_at = now
+
             path = CAPTURE_DIR / f"{PATTERN_NAMES[idx]}.png"
             # Lưu ảnh xám để xử lý ổn định hơn
             cv2.imwrite(str(path), gray)
@@ -151,6 +174,7 @@ def main():
             else:
                 print(f"  -> Chuyen sang pattern {PATTERN_NAMES[idx]} tren tablet")
             sync_viewer(idx)
+            wait_for_key_release()
         elif key == ord('r') and idx > 0:
             idx -= 1
             print(f"  Chup lai {PATTERN_NAMES[idx]}")
