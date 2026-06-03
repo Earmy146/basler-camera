@@ -37,11 +37,10 @@ DEFLECTO_MQTT_EXPECTED_VIEWERS=0
 DEFLECTO_MQTT_ACK_TIMEOUT_SEC=2.0
 ```
 
-3. Tao `deflecto-viewer-config.js` cho browser:
+3. Kiem tra `deflecto-viewer-config.js` cho browser.
 
-```powershell
-copy deflecto-viewer-config.example.js deflecto-viewer-config.js
-```
+File nay dang chua cau hinh HiveMQ WebSocket cho dien thoai. Neu doi broker,
+username, password, session, sua truc tiep trong file nay.
 
 Trong browser, HiveMQ Cloud dung WebSocket TLS port `8884`, khac voi Python
 dung MQTT TLS port `8883`.
