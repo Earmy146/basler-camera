@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from deflecto_env import load_dotenv
+from mqtt_control import MqttViewerSync
 from pypylon import pylon
 
 load_dotenv()
@@ -35,6 +36,7 @@ CAPTURE_DIR.mkdir(exist_ok=True)
 
 PATTERN_NAMES = [f"V{i}" for i in range(4)] + [f"H{i}" for i in range(4)]
 SYNC_VIEWER = os.environ.get("DEFLECTO_SYNC_VIEWER", "1") != "0"
+CONTROL_MODE = os.environ.get("DEFLECTO_CONTROL_MODE", "http").strip().lower()
 CONTROL_SET_URL = os.environ.get("DEFLECTO_CONTROL_SET_URL", "http://127.0.0.1:8000/api/set")
 PATTERN_SETTLE_SEC = float(os.environ.get("DEFLECTO_SETTLE_SEC", "0.35"))
 CAPTURE_COOLDOWN_SEC = float(os.environ.get("DEFLECTO_CAPTURE_COOLDOWN_SEC", "0.25"))
@@ -42,6 +44,7 @@ ADB_REVERSE = os.environ.get("DEFLECTO_ADB_REVERSE", "1") != "0"
 ADB_PATH = os.environ.get("DEFLECTO_ADB_PATH", "adb")
 ADB_PORT = os.environ.get("DEFLECTO_ADB_PORT", "8000")
 ADB_SERIAL = os.environ.get("DEFLECTO_ADB_SERIAL", "").strip()
+MQTT_SYNC = MqttViewerSync(PATTERN_NAMES) if CONTROL_MODE == "mqtt" else None
 
 # Khóa exposure/gain để 8 ảnh có cường độ nhất quán (BẮT BUỘC cho phase shifting).
 # Exposure theo micro-giây. Tăng/giảm để tránh saturated (xem overlay khi chạy).
@@ -123,6 +126,14 @@ def sync_viewer(idx):
     if not SYNC_VIEWER:
         return
 
+    if CONTROL_MODE == "mqtt":
+        MQTT_SYNC.sync(idx)
+        return
+    if CONTROL_MODE in ("off", "none", "0"):
+        return
+    if CONTROL_MODE != "http":
+        print(f"  [WARN] DEFLECTO_CONTROL_MODE={CONTROL_MODE} khong hop le, dung http.")
+
     name = PATTERN_NAMES[idx]
     query = urllib.parse.urlencode({"idx": idx})
     url = f"{CONTROL_SET_URL}?{query}"
@@ -150,6 +161,9 @@ def wait_for_key_release(quiet_sec=0.08, timeout_sec=0.5):
 
 
 def setup_adb_reverse():
+    if CONTROL_MODE == "mqtt":
+        print("  [MQTT] Bo qua adb reverse vi dang sync qua HiveMQ.")
+        return
     if not ADB_REVERSE:
         return
 
@@ -264,6 +278,8 @@ def main():
     camera.StopGrabbing()
     camera.Close()
     cv2.destroyAllWindows()
+    if MQTT_SYNC is not None:
+        MQTT_SYNC.close()
 
 
 if __name__ == "__main__":

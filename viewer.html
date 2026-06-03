@@ -72,13 +72,19 @@
   <button id="start-btn">START</button>
 </div>
 
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
 const urlParams = new URLSearchParams(window.location.search);
 let T = parseInt(urlParams.get('T')) || 40;
 
 const N_PHASES = 4;
 const N_TOTAL = 8;
-const isControlled = window.location.protocol !== 'file:';
+const requestedControl = (urlParams.get('control') || urlParams.get('mode') || '').toLowerCase();
+const hasMqttParams = urlParams.has('mqttHost') || urlParams.has('mqtt_host');
+const controlMode = requestedControl || (hasMqttParams ? 'mqtt' : (window.location.protocol !== 'file:' ? 'http' : 'tap'));
+const isMqttControlled = controlMode === 'mqtt';
+const isHttpControlled = controlMode === 'http' && window.location.protocol !== 'file:';
+const isControlled = isMqttControlled || isHttpControlled;
 
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -94,12 +100,47 @@ const dpr = window.devicePixelRatio || 1;
 displayInfo.textContent =
   `Display: ${window.innerWidth}×${window.innerHeight} CSS px, ` +
   `DPR=${dpr.toFixed(2)}, ` +
-  `physical=${Math.round(window.innerWidth * dpr)}×${Math.round(window.innerHeight * dpr)} px`;
+  `physical=${Math.round(window.innerWidth * dpr)}×${Math.round(window.innerHeight * dpr)} px, ` +
+  `control=${controlMode}`;
 
 let idx = 0;
 let started = false;
 let lastVersion = -1;
 let pollTimer = null;
+let mqttClient = null;
+let mqttConnected = false;
+
+function getParamAny(names, fallback = '') {
+  for (const name of names) {
+    const value = urlParams.get(name);
+    if (value !== null && value !== '') return value;
+  }
+  return fallback;
+}
+
+function getViewerId() {
+  const key = 'deflectoViewerId';
+  let value = '';
+  try {
+    value = localStorage.getItem(key);
+    if (!value) {
+      value = `viewer-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`;
+      localStorage.setItem(key, value);
+    }
+  } catch (e) {
+    value = `viewer-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`;
+  }
+  return value;
+}
+
+function mqttPrefix() {
+  const session = getParamAny(['mqttSession', 'mqtt_session'], 'default').replace(/^\/+|\/+$/g, '');
+  return getParamAny(['mqttTopicPrefix', 'mqtt_topic_prefix'], `deflectometry/${session}`).replace(/^\/+|\/+$/g, '');
+}
+
+const viewerId = getViewerId();
+const mqttCmdTopic = `${mqttPrefix()}/cmd`;
+const mqttAckTopic = `${mqttPrefix()}/ack`;
 
 function resize() {
   const d = window.devicePixelRatio || 1;
@@ -113,7 +154,7 @@ window.addEventListener('resize', () => {
 });
 
 async function apiGet(path) {
-  if (!isControlled) return null;
+  if (!isHttpControlled) return null;
   try {
     const res = await fetch(path, { cache: 'no-store' });
     if (!res.ok) return null;
@@ -125,14 +166,18 @@ async function apiGet(path) {
 
 function applyState(state) {
   if (!state) return false;
-  const nextIdx = Math.max(0, Math.min(N_TOTAL - 1, parseInt(state.idx)));
-  const nextT = Math.max(1, parseInt(state.T) || T);
-  const changed = nextIdx !== idx || nextT !== T || state.version !== lastVersion;
+  const parsedIdx = parseInt(state.idx);
+  if (Number.isNaN(parsedIdx)) return false;
+  const nextIdx = Math.max(0, Math.min(N_TOTAL - 1, parsedIdx));
+  const parsedT = state.T === undefined ? T : parseInt(state.T);
+  const nextT = Math.max(1, Number.isNaN(parsedT) ? T : parsedT);
+  const nextVersion = state.version === undefined ? lastVersion + 1 : state.version;
+  const changed = nextIdx !== idx || nextT !== T || nextVersion !== lastVersion;
 
   idx = nextIdx;
   T = nextT;
   tInput.value = T;
-  lastVersion = state.version;
+  lastVersion = nextVersion;
 
   if (started && changed) {
     drawPattern(idx);
@@ -153,8 +198,104 @@ async function setRemote(params) {
 }
 
 function startPolling() {
-  if (!isControlled || pollTimer) return;
+  if (!isHttpControlled || pollTimer) return;
   pollTimer = setInterval(() => syncFromServer(false), 100);
+}
+
+function mqttUrl() {
+  const host = getParamAny(['mqttHost', 'mqtt_host']);
+  if (!host) return '';
+  const port = getParamAny(['mqttWsPort', 'mqtt_ws_port', 'mqttPort', 'mqtt_port'], '8884');
+  const path = getParamAny(['mqttPath', 'mqtt_path'], '/mqtt');
+  const scheme = getParamAny(['mqttScheme', 'mqtt_scheme'], 'wss');
+  return `${scheme}://${host}:${port}${path}`;
+}
+
+function publishMqttAck(state) {
+  if (!mqttClient || !mqttConnected || !state) return;
+  const phaseIdx = idx % N_PHASES;
+  const name = (idx < N_PHASES ? 'V' : 'H') + phaseIdx;
+  mqttClient.publish(mqttAckTopic, JSON.stringify({
+    viewerId,
+    idx,
+    name,
+    T,
+    version: state.version,
+    ready: started,
+    ts: Date.now(),
+  }), { qos: 1, retain: false });
+}
+
+function handleMqttCommand(rawPayload) {
+  let state;
+  try {
+    state = JSON.parse(rawPayload.toString());
+  } catch (e) {
+    return;
+  }
+  if (!applyState(state)) return;
+  requestAnimationFrame(() => publishMqttAck(state));
+}
+
+function startMqtt() {
+  if (!isMqttControlled || mqttClient) return;
+  if (!window.mqtt) {
+    label.textContent = 'MQTT.js load failed';
+    return;
+  }
+
+  const url = mqttUrl();
+  if (!url) {
+    label.textContent = 'MQTT missing mqttHost';
+    return;
+  }
+
+  mqttClient = mqtt.connect(url, {
+    clientId: viewerId,
+    username: getParamAny(['mqttUsername', 'mqttUser', 'mqtt_username', 'mqtt_user']),
+    password: getParamAny(['mqttPassword', 'mqttPass', 'mqtt_password', 'mqtt_pass']),
+    clean: true,
+    connectTimeout: 8000,
+    reconnectPeriod: 1000,
+  });
+
+  mqttClient.on('connect', () => {
+    mqttConnected = true;
+    mqttClient.subscribe(mqttCmdTopic, { qos: 1 });
+    label.textContent = `MQTT connected ${mqttCmdTopic}`;
+  });
+
+  mqttClient.on('reconnect', () => {
+    label.textContent = 'MQTT reconnecting';
+  });
+
+  mqttClient.on('error', (err) => {
+    label.textContent = `MQTT error: ${err.message || err}`;
+  });
+
+  mqttClient.on('close', () => {
+    mqttConnected = false;
+  });
+
+  mqttClient.on('message', (topic, payload) => {
+    if (topic === mqttCmdTopic) handleMqttCommand(payload);
+  });
+}
+
+function publishMqttCommand(nextIdx) {
+  if (!mqttClient || !mqttConnected) {
+    idx = nextIdx;
+    drawPattern(idx);
+    return;
+  }
+  const payload = {
+    idx: nextIdx,
+    T,
+    version: Date.now(),
+    source: viewerId,
+    ts: Date.now(),
+  };
+  mqttClient.publish(mqttCmdTopic, JSON.stringify(payload), { qos: 1, retain: true });
 }
 
 function drawPattern(i) {
@@ -196,13 +337,16 @@ function drawPattern(i) {
   ctx.putImageData(img, 0, 0);
 
   const name = (isVertical ? 'V' : 'H') + phaseIdx;
-  label.textContent = `${i + 1}/${N_TOTAL}  ${name}  T=${T}  ${isControlled ? '(PC sync)' : '(tap)'}`;
+  const syncLabel = isMqttControlled ? '(MQTT sync)' : (isHttpControlled ? '(PC sync)' : '(tap)');
+  label.textContent = `${i + 1}/${N_TOTAL}  ${name}  T=${T}  ${syncLabel}`;
 }
 
 async function next() {
   const nextIdx = (idx + 1) % N_TOTAL;
-  if (isControlled) {
+  if (isHttpControlled) {
     await setRemote({ idx: nextIdx, T });
+  } else if (isMqttControlled) {
+    publishMqttCommand(nextIdx);
   } else {
     idx = nextIdx;
     drawPattern(idx);
@@ -226,10 +370,13 @@ startBtn.addEventListener('click', async () => {
 
   setTimeout(async () => {
     resize();
-    if (isControlled) {
+    if (isHttpControlled) {
       await setRemote({ T });
       await syncFromServer(true);
       startPolling();
+    } else if (isMqttControlled) {
+      drawPattern(idx);
+      startMqtt();
     } else {
       drawPattern(idx);
     }
